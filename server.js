@@ -2,12 +2,20 @@ const http = require('http');
 const fs = require('fs');
 const url = require('url');
 const path = require('path');
-const etag = require('etag');
-const fresh = require('fresh');
 
-const server = http.createServer(function (req, res) {
-    let filePath, isHtml, isFresh;
+/**
+ * 协商缓存依赖的模块
+ */
+const etag = require('etag');//生成etag
+const fresh = require('fresh');//用来协商缓存是否有效的判断
+
+/**
+ * 启动一个serve
+ */
+const server = http.createServer((req, res) => {
+    let filePath, isHtml, needUpdate;
     const pathname = url.parse(req.url, true).pathname;
+
     //根据请求路径取文件绝对路径
     if (pathname === '/') {
         filePath = path.join(__dirname, '/index.html');
@@ -22,42 +30,43 @@ const server = http.createServer(function (req, res) {
         if (err) {
             res.writeHead(404, 'not found');
             res.end('<h1>404 Not Found</h1>');
-        } else {
-            if (isHtml) {
-                // html文件使用协商缓存
-                const lastModified = stat.mtime.toUTCString();
-                const fileEtag = etag(stat);                
-                res.setHeader('Cache-Control', 'public, max-age=0');
-                res.setHeader('Last-Modified', lastModified);
-                res.setHeader('ETag', fileEtag);
-
-                // 根据请求头判断缓存是否是最新的
-                isFresh = fresh(req.headers, {
-                    'etag': fileEtag,
-                    'last-modified': lastModified
-                });
-            } else {
-                // 其他静态资源使用强缓存
-                res.setHeader('Cache-Control', 'public, max-age=3600');
-            }
-
-            fs.readFile(filePath, 'utf-8', function (err, fileContent) {
-                if (err) {
-                    res.writeHead(404, 'not found');
-                    res.end('<h1>404 Not Found</h1>');
-                } else {
-                    if (isHtml && isFresh) {
-                        //如果缓存是最新的 则返回304状态码
-                        //由于其他资源使用了强缓存 所以不会出现304
-                        res.writeHead(304, 'Not Modified');
-                    } else {
-                        res.write(fileContent, 'utf-8');
-                    }
-
-                    res.end();
-                }
-            });
+            return
         }
+        // 生成协商缓存参数，并写入response Header
+        const lastModified = stat.mtime.toUTCString();//文件的最近修改时间
+        const fileEtag = etag(stat);//生成文件内容的唯一标示
+        res.setHeader('Last-Modified', lastModified);
+        res.setHeader('ETag', fileEtag);
+        if (isHtml) {
+            res.setHeader('Cache-Control', 'public, max-age=0');//禁止强制缓存，但需要进行协商缓存
+            res.setHeader('Cache-Control', 'public, no-cache');//禁止强制缓存，但需要进行协商缓存
+            // res.setHeader('Cache-Control', 'public, no-store');//禁止强制缓存，也禁止协商缓存
+
+            // 根据请求头参数判断缓存是否是最新的,以此决定要不要更新
+            needUpdate = !fresh(req.headers, {
+                'etag': fileEtag,
+                'last-modified': lastModified
+            });
+        } else {
+            // 其他静态资源使用强缓存
+            res.setHeader('Cache-Control', 'public, max-age=31536000, must-revalidate');
+        }
+
+        fs.readFile(filePath, 'utf-8', (err, fileContent) => {
+            if (err) {
+                res.writeHead(404, 'not found');
+                res.end('<h1>404 Not Found</h1>');
+            } else {
+                if (isHtml && !needUpdate) {
+                    res.statusCode = 304
+                } else {
+                    res.statusCode = 200
+                    res.write(fileContent, 'utf-8')
+                }
+                res.end();
+            }
+        });
+
     });
 });
 server.listen(8080);
