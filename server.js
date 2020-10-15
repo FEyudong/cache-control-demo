@@ -7,7 +7,7 @@ const path = require('path');
  * 协商缓存依赖的模块
  */
 const etag = require('etag');//生成etag
-const fresh = require('fresh');//用来协商缓存是否有效的判断
+const fresh = require('fresh');//放着协商缓存是否有效的判断逻辑
 
 /**
  * 启动一个serve
@@ -24,7 +24,6 @@ const server = http.createServer((req, res) => {
         filePath = path.join(__dirname, 'static', pathname);
         isHtml = false;
     }
-
     // 读取文件描述信息，用于计算etag及设置Last-Modified
     fs.stat(filePath, function (err, stat) {
         if (err) {
@@ -38,36 +37,38 @@ const server = http.createServer((req, res) => {
         res.setHeader('Last-Modified', lastModified);
         res.setHeader('ETag', fileEtag);
         if (isHtml) {
+            //禁止html的缓存
             res.setHeader('Cache-Control', 'public, max-age=0');//禁止强制缓存，但需要进行协商缓存
-            res.setHeader('Cache-Control', 'public, no-cache');//禁止强制缓存，但需要进行协商缓存
+            // res.setHeader('Cache-Control', 'public, no-cache');//禁止强制缓存，但需要进行协商缓存
             // res.setHeader('Cache-Control', 'public, no-store');//禁止强制缓存，也禁止协商缓存
-
-            // 根据请求头参数判断缓存是否是最新的,以此决定要不要更新
-            needUpdate = !fresh(req.headers, {
-                'etag': fileEtag,
-                'last-modified': lastModified
-            });
         } else {
-            // 其他静态资源使用强缓存
-            res.setHeader('Cache-Control', 'public, max-age=31536000, must-revalidate');
+            // 其他静态资源设置的强制缓存时间较长一些
+            res.setHeader('Cache-Control', 'public, max-age=31536000');
+            // res.setHeader('Cache-Control', 'public, max-age=6');
         }
-
-        fs.readFile(filePath, 'utf-8', (err, fileContent) => {
-            if (err) {
-                res.writeHead(404, 'not found');
-                res.end('<h1>404 Not Found</h1>');
-            } else {
-                if (isHtml && !needUpdate) {
-                    res.statusCode = 304
+        // 根据请求头参数判断缓存是否是最新的,以此决定要不要更新
+        needUpdate = !fresh(req.headers, {
+            'etag': fileEtag,
+            'last-modified': lastModified
+        });
+        console.log(needUpdate)
+        if (needUpdate) {
+            fs.readFile(filePath, 'utf-8', (err, fileContent) => {
+                if (err) {
+                    res.writeHead(404, 'not found');
+                    res.end('<h1>404 Not Found</h1>');
                 } else {
                     res.statusCode = 200
                     res.write(fileContent, 'utf-8')
+                    res.end();
                 }
-                res.end();
-            }
-        });
-
+            });
+        } else {
+            res.statusCode = 304
+            // res.writeHead(304, 'Not Modified');
+            res.end();
+        }
     });
 });
-server.listen(8080);
-console.log('server is running on http://localhost:8080/');
+server.listen(4000);
+console.log('server is running on http://localhost:4000/');
